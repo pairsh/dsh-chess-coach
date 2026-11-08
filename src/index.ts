@@ -10,6 +10,7 @@ import { Chess } from 'chess.js'
 import type { AnalyzeRequest, ApiFailure } from './shared/types.ts'
 import { buildCoachReport } from './host/coach.ts'
 import { EngineError, StockfishService } from './host/engine.ts'
+import { EnCroissantError, EnCroissantService } from './host/encroissant.ts'
 import { isValidFen, LichessClient, LichessError } from './host/lichess.ts'
 
 export const name = 'dsh-chess-coach'
@@ -27,6 +28,10 @@ export interface ChessCoachConfig {
   readonly hashMb?: number
   /** Default MultiPV when the request does not name one. */
   readonly defaultMultipv?: number
+  /** Explicit En Croissant data directory; empty means auto-detect. */
+  readonly enCroissantDataDir?: string
+  /** Explicit En Croissant executable; empty means auto-detect. */
+  readonly enCroissantAppPath?: string
 }
 
 interface WebServerLike {
@@ -127,10 +132,15 @@ function numberOrUndefined(value: unknown): number | undefined {
  * @param config - profile config from cordis.patch.yml.
  */
 export function apply(ctx: HostContext, config: ChessCoachConfig = {}): void {
+  const enCroissant = new EnCroissantService({
+    ...(config.enCroissantDataDir ? { dataDir: config.enCroissantDataDir } : {}),
+    ...(config.enCroissantAppPath ? { appPath: config.enCroissantAppPath } : {}),
+  })
   const engine = new StockfishService({
     ...(config.enginePath ? { enginePath: config.enginePath } : {}),
     ...(config.threads === undefined ? {} : { threads: config.threads }),
     ...(config.hashMb === undefined ? {} : { hashMb: config.hashMb }),
+    extraEngines: enCroissant.engines(),
   })
   const lichess = new LichessClient()
 
@@ -159,6 +169,40 @@ export function apply(ctx: HostContext, config: ChessCoachConfig = {}): void {
         if (action === 'status' && method === 'GET') {
           const status = await engine.probe()
           writeJson(res, 200, { ok: true, status })
+          return
+        }
+        if (action === 'en-croissant/status' && method === 'GET') {
+          writeJson(res, 200, { ok: true, status: await enCroissant.status() })
+          return
+        }
+        if (action === 'en-croissant/games' && method === 'GET') {
+          const database = url.searchParams.get('db')
+          if (!database) throw new HttpError(400, 'bad-database', '缺少 db 参数。')
+          const limit = Number(url.searchParams.get('limit') ?? '30')
+          const offset = Number(url.searchParams.get('offset') ?? '0')
+          const games = await enCroissant.games(database, {
+            ...(url.searchParams.get('player') ? { player: url.searchParams.get('player')! } : {}),
+            ...(url.searchParams.get('event') ? { event: url.searchParams.get('event')! } : {}),
+            ...(url.searchParams.get('result') ? { result: url.searchParams.get('result')! } : {}),
+            ...(url.searchParams.get('after') ? { after: url.searchParams.get('after')! } : {}),
+            ...(url.searchParams.get('before') ? { before: url.searchParams.get('before')! } : {}),
+            ...(Number.isFinite(limit) ? { limit } : {}),
+            ...(Number.isFinite(offset) ? { offset } : {}),
+          })
+          writeJson(res, 200, games)
+          return
+        }
+        if (action === 'en-croissant/game' && method === 'GET') {
+          const database = url.searchParams.get('db')
+          const id = Number(url.searchParams.get('id'))
+          if (!database) throw new HttpError(400, 'bad-database', '缺少 db 参数。')
+          if (!Number.isSafeInteger(id) || id < 0) throw new HttpError(400, 'bad-game', '对局 ID 不合法。')
+          writeJson(res, 200, await enCroissant.game(database, id))
+          return
+        }
+        if (action === 'en-croissant/open' && method === 'POST') {
+          enCroissant.launch()
+          writeJson(res, 200, { ok: true })
           return
         }
         if (action === 'engine/select' && method === 'POST') {
@@ -234,6 +278,10 @@ export function apply(ctx: HostContext, config: ChessCoachConfig = {}): void {
         if (error instanceof EngineError) {
           const status = error.code === 'engine-not-found' || error.code === 'engine-start-failed' ? 503 : 409
           writeFailure(res, status, error.code, error.message)
+          return
+        }
+        if (error instanceof EnCroissantError) {
+          writeFailure(res, error.status, error.code, error.message)
           return
         }
         if (error instanceof LichessError) {

@@ -4,11 +4,23 @@ import type {
   AnalyzeResponse,
   CloudEvalResponse,
   EngineStatus,
+  EnCroissantStatus,
   OpeningResponse,
 } from '../shared/types.ts'
-import { ApiError, fetchEngineStatus, requestAnalysis, requestCloudEval, requestOpening, selectEngine } from './api.ts'
+import {
+  ApiError,
+  fetchEngineStatus,
+  fetchEnCroissantGame,
+  fetchEnCroissantStatus,
+  openEnCroissant,
+  requestAnalysis,
+  requestCloudEval,
+  requestOpening,
+  selectEngine,
+} from './api.ts'
 import { Board, type BoardArrow } from './Board.tsx'
 import { CoachPanel } from './CoachPanel.tsx'
+import { EnCroissantPanel } from './EnCroissantPanel.tsx'
 import { EvalBar } from './EvalBar.tsx'
 import { FenDialog, PgnDialog, PromotionDialog, SettingsDialog } from './Dialogs.tsx'
 import {
@@ -20,11 +32,24 @@ import {
   safeReplay,
   sanToMove,
 } from './chess-utils.ts'
-import { KnightIcon } from './icons.tsx'
 import type { Settings, StoredGame } from './types.ts'
 import { DEFAULT_SETTINGS } from './types.ts'
 
 const STORAGE_PREFIX = 'dsh-chess-coach:v1'
+
+type PanelTab = 'coach' | 'engine' | 'database' | 'moves'
+
+interface GameHeaders {
+  white: string
+  black: string
+  whiteElo?: string
+  blackElo?: string
+  event?: string
+  date?: string
+  result?: string
+}
+
+const EMPTY_HEADERS: GameHeaders = { white: '白方', black: '黑方' }
 
 function readJson<T>(key: string): T | null {
   try {
@@ -72,7 +97,11 @@ function loadGame(sessionId: string): StoredGame {
   try {
     const check = new Chess(stored.startFen)
     for (const move of moves.slice(0, cursor)) check.move(move)
-    return { startFen: stored.startFen, moves, cursor }
+    const storedHeaders = stored.headers
+    const headers = storedHeaders && typeof storedHeaders.white === 'string' && typeof storedHeaders.black === 'string'
+      ? { ...storedHeaders }
+      : undefined
+    return { startFen: stored.startFen, moves, cursor, ...(headers ? { headers } : {}) }
   } catch {
     return { startFen: DEFAULT_FEN, moves: [], cursor: 0 }
   }
@@ -121,6 +150,10 @@ export function ChessCoach({ sessionId }: { sessionId: string }) {
   const [engineBusy, setEngineBusy] = useState(false)
   const [activeLine, setActiveLine] = useState(0)
   const [engineEpoch, setEngineEpoch] = useState(0)
+  const [panelTab, setPanelTab] = useState<PanelTab>('coach')
+  const [headers, setHeaders] = useState<GameHeaders>(initial.headers ?? EMPTY_HEADERS)
+  const [enCroissant, setEnCroissant] = useState<EnCroissantStatus | null>(null)
+  const [enCroissantLoading, setEnCroissantLoading] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -155,6 +188,8 @@ export function ChessCoach({ sessionId }: { sessionId: string }) {
     setCloud(null)
     setOpening(null)
     setActiveLine(0)
+    setPanelTab('coach')
+    setHeaders(next.headers ?? EMPTY_HEADERS)
     setSettingsOpen(false)
     setFenOpen(false)
     setPgnOpen(false)
@@ -162,8 +197,8 @@ export function ChessCoach({ sessionId }: { sessionId: string }) {
 
   useEffect(() => {
     if (activeSession !== sessionId) return
-    writeJson(`${STORAGE_PREFIX}:game:${activeSession}`, { startFen, moves, cursor } satisfies StoredGame)
-  }, [activeSession, sessionId, startFen, moves, cursor])
+    writeJson(`${STORAGE_PREFIX}:game:${activeSession}`, { startFen, moves, cursor, headers } satisfies StoredGame)
+  }, [activeSession, sessionId, startFen, moves, cursor, headers])
 
   const game = useMemo(() => safeReplay(startFen, moves.slice(0, cursor)), [startFen, moves, cursor])
   const fen = game.fen()
@@ -225,6 +260,27 @@ export function ChessCoach({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     void refreshEngine()
   }, [refreshEngine, engineEpoch])
+
+  const refreshEnCroissant = useCallback(async () => {
+    setEnCroissantLoading(true)
+    try {
+      setEnCroissant(await fetchEnCroissantStatus())
+    } catch (error) {
+      setEnCroissant((current) => current ?? {
+        installed: false,
+        dataDir: '',
+        databases: [],
+        engines: [],
+        error: errorText(error),
+      })
+    } finally {
+      setEnCroissantLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void refreshEnCroissant()
+  }, [refreshEnCroissant])
 
   useEffect(() => {
     setAnalysis(null)
@@ -368,6 +424,7 @@ export function ChessCoach({ sessionId }: { sessionId: string }) {
     setSelected(null)
     setAnalysis(null)
     setActiveLine(0)
+    setHeaders(EMPTY_HEADERS)
     notify('已开始新棋局')
   }, [notify])
 
@@ -376,6 +433,7 @@ export function ChessCoach({ sessionId }: { sessionId: string }) {
     setMoves([])
     setCursor(0)
     setSelected(null)
+    setHeaders(EMPTY_HEADERS)
     setFenOpen(false)
     notify('FEN 局面已载入')
   }, [notify])
@@ -383,8 +441,8 @@ export function ChessCoach({ sessionId }: { sessionId: string }) {
   const importPgn = useCallback((text: string) => {
     const parsed = new Chess()
     parsed.loadPgn(text)
-    const headers = parsed.getHeaders()
-    const nextFen = typeof headers.FEN === 'string' && headers.FEN.trim() ? headers.FEN.trim() : DEFAULT_FEN
+    const pgnHeaders = parsed.getHeaders()
+    const nextFen = typeof pgnHeaders.FEN === 'string' && pgnHeaders.FEN.trim() ? pgnHeaders.FEN.trim() : DEFAULT_FEN
     const imported = parsed.history()
     const checkGame = new Chess(nextFen)
     for (const san of imported) checkGame.move(san)
@@ -392,8 +450,37 @@ export function ChessCoach({ sessionId }: { sessionId: string }) {
     setMoves(imported)
     setCursor(imported.length)
     setSelected(null)
+    setHeaders({
+      white: pgnHeaders.White?.trim() || '白方',
+      black: pgnHeaders.Black?.trim() || '黑方',
+      ...(pgnHeaders.WhiteElo?.trim() ? { whiteElo: pgnHeaders.WhiteElo.trim() } : {}),
+      ...(pgnHeaders.BlackElo?.trim() ? { blackElo: pgnHeaders.BlackElo.trim() } : {}),
+      ...(pgnHeaders.Event?.trim() ? { event: pgnHeaders.Event.trim() } : {}),
+      ...(pgnHeaders.Date?.trim() ? { date: pgnHeaders.Date.trim() } : {}),
+      ...(pgnHeaders.Result?.trim() ? { result: pgnHeaders.Result.trim() } : {}),
+    })
     setPgnOpen(false)
     notify(`已载入 ${imported.length} 个半回合`)
+  }, [notify])
+
+  const loadEnCroissantGame = useCallback(async (database: string, id: number) => {
+    try {
+      const response = await fetchEnCroissantGame(database, id)
+      importPgn(response.pgn)
+      setPanelTab('coach')
+      notify(`已从 En Croissant 载入（${response.source === 'lichess' ? 'Lichess' : 'PGN 附属文件'}）`)
+    } catch (error) {
+      throw new Error(errorText(error))
+    }
+  }, [importPgn, notify])
+
+  const openCroissantApp = useCallback(async () => {
+    try {
+      await openEnCroissant()
+      notify('正在打开 En Croissant')
+    } catch (error) {
+      notify(`打开 En Croissant 失败：${errorText(error)}`)
+    }
   }, [notify])
 
   const exportPgn = useCallback((): string => pgnFromGame(startFen, moves.slice(0, cursor), settings.myColor), [cursor, moves, settings.myColor, startFen])
@@ -451,15 +538,24 @@ export function ChessCoach({ sessionId }: { sessionId: string }) {
   const sideText = turn === 'w' ? '白方走' : '黑方走'
   const scoreText = formatEval(evalWhiteCp, evalWhiteMate)
   const lastMoveSan = lastMove?.san ?? null
+  const topColor = settings.orientation === 'w' ? 'b' : 'w'
+  const bottomColor = settings.orientation
+  const topName = topColor === 'w' ? headers.white : headers.black
+  const bottomName = bottomColor === 'w' ? headers.white : headers.black
+  const topElo = topColor === 'w' ? headers.whiteElo : headers.blackElo
+  const bottomElo = bottomColor === 'w' ? headers.whiteElo : headers.blackElo
 
   return (
-    <div className="cc-root">
+    <div className="cc-root cc-croissant">
       <header className="cc-header">
         <div className="cc-brand">
-          <span className="cc-brand-icon"><KnightIcon size={18} /></span>
+          <span className="cc-brand-icon cc-croissant-mark" aria-hidden="true">🥐</span>
           <div>
-            <div className="cc-brand-title">棋局教练</div>
-            <div className="cc-brand-sub">Stockfish · Lichess</div>
+            <div className="cc-brand-title">分析棋盘 <span className="cc-ai-chip">AI 教练</span></div>
+            <div className="cc-brand-sub">
+              {headers.event ?? 'En Croissant'}
+              {headers.date ? ` · ${headers.date}` : ''}
+            </div>
           </div>
         </div>
         <div className="cc-header-actions">
@@ -469,123 +565,167 @@ export function ChessCoach({ sessionId }: { sessionId: string }) {
       </header>
 
       <div className="cc-scroll">
-        <section className="cc-board-section">
-          <EvalBar whiteCp={evalWhiteCp} whiteMate={evalWhiteMate} source={evalSource} />
-          {gameOver && <div className="cc-result-banner">{gameOver}</div>}
-          <div className="cc-board-frame">
-            <Board
-              board={board}
-              orientation={settings.orientation}
-              selected={selected}
-              legalTargets={selectedTargets}
-              lastMove={lastMove ? { from: lastMove.from, to: lastMove.to } : null}
-              checkSquare={checkSquare}
-              arrow={arrow}
-              showArrows={settings.showArrows}
-              turn={turn}
-              onSquareClick={onSquareClick}
-              onDrop={onDrop}
-            />
-          </div>
-          <div className="cc-board-meta">
-            <span className={`cc-turn ${turn === 'w' ? 'cc-turn-w' : 'cc-turn-b'}`}>{sideText}</span>
-            <span>{check ? '将军！' : gameOver ?? `第 ${fullmove} 回合`}</span>
-            {lastMoveSan && <span className="cc-muted">上一手 {lastMoveSan}</span>}
-          </div>
-
-          <div className="cc-controls">
-            <button type="button" className="cc-btn cc-btn-icon" title="开局" aria-label="跳到开局" onClick={() => goTo(0)}>⏮</button>
-            <button type="button" className="cc-btn cc-btn-icon" title="上一步" aria-label="上一步" onClick={() => goTo(cursor - 1)} disabled={cursor === 0}>◀</button>
-            <button type="button" className="cc-btn cc-btn-icon" title="下一步" aria-label="下一步" onClick={() => goTo(cursor + 1)} disabled={cursor >= moves.length}>▶</button>
-            <button type="button" className="cc-btn cc-btn-icon" title="最新" aria-label="跳到最新" onClick={() => goTo(moves.length)} disabled={cursor >= moves.length}>⏭</button>
-            <span className="cc-controls-gap" />
-            <button type="button" className="cc-btn cc-btn-icon" title="撤销" aria-label="撤销" onClick={undo} disabled={cursor === 0}>↩</button>
-            <button type="button" className="cc-btn cc-btn-icon" title="新棋局" aria-label="新棋局" onClick={reset}>＋</button>
-          </div>
-
-          <div className="cc-library-actions">
-            <button type="button" className="cc-btn cc-btn-ghost" onClick={() => setFenOpen(true)}>FEN</button>
-            <button type="button" className="cc-btn cc-btn-ghost" onClick={() => setPgnOpen(true)}>PGN</button>
-            <button type="button" className="cc-btn cc-btn-ghost" onClick={() => void copyFen()}>复制 FEN</button>
-            <a className="cc-btn cc-btn-ghost cc-link-btn" href={`https://lichess.org/analysis/${encodeURIComponent(fen)}`} target="_blank" rel="noreferrer">Lichess ↗</a>
-          </div>
-
-          <div className="cc-move-list" aria-label="着法记录">
-            {moveRows.length === 0 ? (
-              <p className="cc-muted cc-move-empty">点击棋子或拖动走子；也可以载入 FEN / PGN。</p>
-            ) : (
-              moveRows.map((row, rowIndex) => (
-                <div className="cc-move-row" key={row.number}>
-                  <span className="cc-move-number">{row.number}.</span>
-                  <button
-                    type="button"
-                    className={`cc-move ${cursor === rowIndex * 2 + 1 ? 'is-current' : ''}`}
-                    onClick={() => goTo(rowIndex * 2 + 1)}
-                  >{row.white ?? '…'}</button>
-                  <button
-                    type="button"
-                    className={`cc-move ${cursor === rowIndex * 2 + 2 ? 'is-current' : ''}`}
-                    onClick={() => goTo(rowIndex * 2 + 2)}
-                    disabled={row.black === undefined}
-                  >{row.black ?? ''}</button>
-                </div>
-              ))
-            )}
-          </div>
-        </section>
-
-        <section className="cc-analysis-section">
-          <div className="cc-analysis-status">
-            <span className={`cc-live-dot ${analysisLoading ? 'is-loading' : analysis ? 'is-live' : ''}`} />
-            <span>{analysisLoading ? 'Stockfish 分析中…' : analysis ? `d${analysis.depth} · ${Math.round(analysis.nodes / 1000)}k 节点 · ${(analysis.timeMs / 1000).toFixed(1)}s` : '等待分析'}</span>
-            <span className="cc-analysis-score">{scoreText}</span>
-          </div>
-          {analysisError && !analysisLoading && (
-            <div className="cc-inline-error">{analysisError}</div>
-          )}
-          {analysis && analysis.lines.length > 0 && (
-            <div className="cc-lines">
-              {analysis.lines.slice(0, 5).map((line, index) => (
-                <button
-                  type="button"
-                  key={`${line.multipv}-${index}`}
-                  className={`cc-line ${activeLine === index ? 'is-active' : ''}`}
-                  onClick={() => setActiveLine(index)}
-                  title="点击在棋盘上显示这条线的第一着"
-                >
-                  <span className="cc-line-rank">{index + 1}</span>
-                  <span className="cc-line-eval">{formatEval(line.whiteCp, line.whiteMate)}</span>
-                  <span className="cc-line-san">{line.pvSan.slice(0, 7).join(' ')}</span>
-                  <span className="cc-line-depth">d{line.depth}</span>
-                </button>
-              ))}
+        <div className="cc-workspace">
+          <section className="cc-board-column">
+            <div className="cc-player-bar">
+              <span className={`cc-player-dot cc-player-dot-${topColor}`} />
+              <span className="cc-player-name">{topName}</span>
+              {topElo && <span className="cc-player-elo">{topElo}</span>}
             </div>
-          )}
-          {!analysis && !analysisLoading && !analysisError && (
-            <div className="cc-muted cc-analysis-hint">走一步棋，引擎会实时给出最佳着法与后续变化。</div>
-          )}
-        </section>
+            <EvalBar whiteCp={evalWhiteCp} whiteMate={evalWhiteMate} source={evalSource} />
+            {gameOver && <div className="cc-result-banner">{gameOver}</div>}
+            <div className="cc-board-frame">
+              <Board
+                board={board}
+                orientation={settings.orientation}
+                selected={selected}
+                legalTargets={selectedTargets}
+                lastMove={lastMove ? { from: lastMove.from, to: lastMove.to } : null}
+                checkSquare={checkSquare}
+                arrow={arrow}
+                showArrows={settings.showArrows}
+                turn={turn}
+                onSquareClick={onSquareClick}
+                onDrop={onDrop}
+              />
+            </div>
+            <div className="cc-player-bar cc-player-bar-bottom">
+              <span className={`cc-player-dot cc-player-dot-${bottomColor}`} />
+              <span className="cc-player-name">{bottomName}</span>
+              {bottomElo && <span className="cc-player-elo">{bottomElo}</span>}
+            </div>
+            <div className="cc-board-meta">
+              <span className={`cc-turn ${turn === 'w' ? 'cc-turn-w' : 'cc-turn-b'}`}>{sideText}</span>
+              <span>{check ? '将军！' : gameOver ?? `第 ${fullmove} 回合`}</span>
+              {lastMoveSan && <span className="cc-muted">上一手 {lastMoveSan}</span>}
+            </div>
 
-        <section className="cc-coach-section">
-          <CoachPanel
-            analysis={analysis}
-            cloud={cloud}
-            opening={opening}
-            loading={analysisLoading}
-            error={analysisError}
-            engineMessage={engineMessage}
-            gameOverText={gameOver}
-            cloudEnabled={settings.cloudEval}
-            openingEnabled={settings.openingExplorer}
-            myColor={settings.myColor}
-            onPlaySan={playSan}
-          />
-          {cloudError && <div className="cc-inline-error cc-inline-error-quiet">云端评估：{cloudError}</div>}
-          {openingError && <div className="cc-inline-error cc-inline-error-quiet">开局库：{openingError}</div>}
-        </section>
+            <div className="cc-controls">
+              <button type="button" className="cc-btn cc-btn-icon" title="开局" aria-label="跳到开局" onClick={() => goTo(0)}>⏮</button>
+              <button type="button" className="cc-btn cc-btn-icon" title="上一步" aria-label="上一步" onClick={() => goTo(cursor - 1)} disabled={cursor === 0}>◀</button>
+              <button type="button" className="cc-btn cc-btn-icon" title="下一步" aria-label="下一步" onClick={() => goTo(cursor + 1)} disabled={cursor >= moves.length}>▶</button>
+              <button type="button" className="cc-btn cc-btn-icon" title="最新" aria-label="跳到最新" onClick={() => goTo(moves.length)} disabled={cursor >= moves.length}>⏭</button>
+              <span className="cc-controls-gap" />
+              <button type="button" className="cc-btn cc-btn-icon" title="撤销" aria-label="撤销" onClick={undo} disabled={cursor === 0}>↩</button>
+              <button type="button" className="cc-btn cc-btn-icon" title="新棋局" aria-label="新棋局" onClick={reset}>＋</button>
+            </div>
+
+            <div className="cc-library-actions">
+              <button type="button" className="cc-btn cc-btn-ghost" onClick={() => setFenOpen(true)}>FEN</button>
+              <button type="button" className="cc-btn cc-btn-ghost" onClick={() => setPgnOpen(true)}>PGN</button>
+              <button type="button" className="cc-btn cc-btn-ghost" onClick={() => void copyFen()}>复制 FEN</button>
+              <a className="cc-btn cc-btn-ghost cc-link-btn" href={`https://lichess.org/analysis/${encodeURIComponent(fen)}`} target="_blank" rel="noreferrer">Lichess ↗</a>
+            </div>
+          </section>
+
+          <section className="cc-side-column">
+            <div className="cc-tabs" role="tablist" aria-label="分析面板">
+              <button type="button" role="tab" aria-selected={panelTab === 'coach'} className={panelTab === 'coach' ? 'is-active' : ''} onClick={() => setPanelTab('coach')}><span aria-hidden="true">✦</span>AI 教练</button>
+              <button type="button" role="tab" aria-selected={panelTab === 'engine'} className={panelTab === 'engine' ? 'is-active' : ''} onClick={() => setPanelTab('engine')}><span aria-hidden="true">▤</span>引擎</button>
+              <button type="button" role="tab" aria-selected={panelTab === 'database'} className={panelTab === 'database' ? 'is-active' : ''} onClick={() => setPanelTab('database')}><span aria-hidden="true">▦</span>数据库</button>
+              <button type="button" role="tab" aria-selected={panelTab === 'moves'} className={panelTab === 'moves' ? 'is-active' : ''} onClick={() => setPanelTab('moves')}><span aria-hidden="true">≡</span>着法</button>
+            </div>
+            <div className="cc-panel-content">
+              {panelTab === 'coach' && (
+                <div className="cc-coach-section">
+                  <CoachPanel
+                    analysis={analysis}
+                    cloud={cloud}
+                    opening={opening}
+                    loading={analysisLoading}
+                    error={analysisError}
+                    engineMessage={engineMessage}
+                    gameOverText={gameOver}
+                    cloudEnabled={settings.cloudEval}
+                    openingEnabled={settings.openingExplorer}
+                    myColor={settings.myColor}
+                    onPlaySan={playSan}
+                  />
+                  {cloudError && <div className="cc-inline-error cc-inline-error-quiet">云端评估：{cloudError}</div>}
+                  {openingError && <div className="cc-inline-error cc-inline-error-quiet">开局库：{openingError}</div>}
+                </div>
+              )}
+
+              {panelTab === 'engine' && (
+                <div className="cc-analysis-section">
+                  <div className="cc-analysis-status">
+                    <span className={`cc-live-dot ${analysisLoading ? 'is-loading' : analysis ? 'is-live' : ''}`} />
+                    <span>{analysisLoading ? 'Stockfish 分析中…' : analysis ? `d${analysis.depth} · ${Math.round(analysis.nodes / 1000)}k 节点 · ${(analysis.timeMs / 1000).toFixed(1)}s` : '等待分析'}</span>
+                    <span className="cc-analysis-score">{scoreText}</span>
+                  </div>
+                  {analysisError && !analysisLoading && (
+                    <div className="cc-inline-error">{analysisError}</div>
+                  )}
+                  {analysis && analysis.lines.length > 0 && (
+                    <div className="cc-lines">
+                      {analysis.lines.slice(0, 5).map((line, index) => (
+                        <button
+                          type="button"
+                          key={`${line.multipv}-${index}`}
+                          className={`cc-line ${activeLine === index ? 'is-active' : ''}`}
+                          onClick={() => setActiveLine(index)}
+                          title="点击在棋盘上显示这条线的第一着"
+                        >
+                          <span className="cc-line-rank">{index + 1}</span>
+                          <span className="cc-line-eval">{formatEval(line.whiteCp, line.whiteMate)}</span>
+                          <span className="cc-line-san">{line.pvSan.slice(0, 7).join(' ')}</span>
+                          <span className="cc-line-depth">d{line.depth}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {!analysis && !analysisLoading && !analysisError && (
+                    <div className="cc-muted cc-analysis-hint">走一步棋，引擎会实时给出最佳着法与后续变化。</div>
+                  )}
+                  {engineStatus && (
+                    <div className="cc-engine-note">
+                      <span className={`cc-live-dot ${engineStatus.available ? 'is-live' : ''}`} />
+                      {engineStatus.available ? `${engineStatus.name}${engineStatus.version ? ` ${engineStatus.version}` : ''}` : '本地引擎未就绪'}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {panelTab === 'database' && (
+                <EnCroissantPanel
+                  status={enCroissant}
+                  statusLoading={enCroissantLoading}
+                  onRefresh={() => void refreshEnCroissant()}
+                  onLoadGame={loadEnCroissantGame}
+                  onOpenApp={() => void openCroissantApp()}
+                />
+              )}
+
+              {panelTab === 'moves' && (
+                <div className="cc-move-list" aria-label="着法记录">
+                  {moveRows.length === 0 ? (
+                    <p className="cc-muted cc-move-empty">点击棋子或拖动走子；也可以载入 FEN / PGN。</p>
+                  ) : (
+                    moveRows.map((row, rowIndex) => (
+                      <div className="cc-move-row" key={row.number}>
+                        <span className="cc-move-number">{row.number}.</span>
+                        <button
+                          type="button"
+                          className={`cc-move ${cursor === rowIndex * 2 + 1 ? 'is-current' : ''}`}
+                          onClick={() => goTo(rowIndex * 2 + 1)}
+                        >{row.white ?? '…'}</button>
+                        <button
+                          type="button"
+                          className={`cc-move ${cursor === rowIndex * 2 + 2 ? 'is-current' : ''}`}
+                          onClick={() => goTo(rowIndex * 2 + 2)}
+                          disabled={row.black === undefined}
+                        >{row.black ?? ''}</button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
 
         <footer className="cc-footer">
-          <span>教练分析由 Stockfish 评估驱动，不替代你的计算。</span>
+          <span>En Croissant 只读接入 · 教练分析由 Stockfish 评估驱动，不替代你的计算。</span>
           <button type="button" className="cc-text-btn" onClick={() => setSettingsOpen(true)}>分析设置</button>
         </footer>
       </div>
@@ -594,10 +734,12 @@ export function ChessCoach({ sessionId }: { sessionId: string }) {
         <SettingsDialog
           settings={settings}
           status={engineStatus}
+          enCroissant={enCroissant}
           busy={engineBusy}
           onChange={changeSettings}
           onClose={() => setSettingsOpen(false)}
           onRefresh={() => { setEngineStatus(null); setEngineEpoch((value) => value + 1) }}
+          onRefreshEnCroissant={() => void refreshEnCroissant()}
           onSelectEngine={(path) => void chooseEngine(path)}
         />
       )}

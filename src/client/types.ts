@@ -53,10 +53,21 @@ export interface Settings {
   orientation: Color
 }
 
+export interface StoredHeaders {
+  white: string
+  black: string
+  whiteElo?: string
+  blackElo?: string
+  event?: string
+  date?: string
+  result?: string
+}
+
 export interface StoredGame {
   startFen: string
   moves: string[]
   cursor: number
+  headers?: StoredHeaders
 }
 
 export const DEFAULT_SETTINGS: Settings = {

@@ -69,6 +69,8 @@ export interface EngineConfig {
   readonly threads?: number
   readonly hashMb?: number
   readonly stateFile?: string
+  /** Engines discovered in En Croissant's engines.json, merged into the picker. */
+  readonly extraEngines?: readonly EngineDescriptor[]
 }
 
 class EngineError extends Error {
@@ -78,6 +80,12 @@ class EngineError extends Error {
     this.name = 'EngineError'
     this.code = code
   }
+}
+
+function samePath(a: string, b: string): boolean {
+  const left = path.resolve(a)
+  const right = path.resolve(b)
+  return process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right
 }
 
 function uniquePaths(paths: readonly string[]): string[] {
@@ -149,29 +157,41 @@ function commonCandidates(): string[] {
 /**
  * Find plausible Stockfish executables without running any of them.
  * @param configured - explicit profile config path, tried first.
+ * @param extraEngines - En Croissant engine descriptors, merged before auto-discovery.
  * @returns existing files, configured path first.
  */
-export function discoverStockfish(configured?: string): EngineDescriptor[] {
+export function discoverStockfish(
+  configured?: string,
+  extraEngines: readonly EngineDescriptor[] = [],
+): EngineDescriptor[] {
+  const found: EngineDescriptor[] = []
+  const seen = new Set<string>()
+  const add = (descriptor: EngineDescriptor): void => {
+    try {
+      if (!fs.statSync(descriptor.path).isFile()) return
+      const key = process.platform === 'win32'
+        ? path.resolve(descriptor.path).toLowerCase()
+        : path.resolve(descriptor.path)
+      if (seen.has(key)) return
+      seen.add(key)
+      found.push(descriptor)
+    } catch {
+      // Missing candidate: not an error, discovery just continues.
+    }
+  }
+  if (configured) {
+    const enriched = extraEngines.find((engine) => samePath(engine.path, configured))
+    add(enriched ? { ...enriched, path: configured } : { path: configured, label: path.basename(configured), source: 'auto' })
+  }
+  for (const engine of extraEngines) add(engine)
   const explicit = [
-    configured ?? '',
     process.env.DSH_CHESS_STOCKFISH ?? '',
     process.env.STOCKFISH_BIN ?? '',
     ...encroissantCandidates(),
     ...pathExecutables(),
     ...commonCandidates(),
   ]
-  const found: EngineDescriptor[] = []
-  for (const file of uniquePaths(explicit)) {
-    try {
-      if (!fs.statSync(file).isFile()) continue
-      found.push({
-        path: file,
-        label: path.basename(file),
-      })
-    } catch {
-      // Missing candidate: not an error, discovery just continues.
-    }
-  }
+  for (const file of uniquePaths(explicit)) add({ path: file, label: path.basename(file), source: 'auto' })
   return found
 }
 
@@ -233,6 +253,8 @@ export class StockfishService {
   private readonly config: EngineConfig
   private readonly stateFile: string
   private selectedPath: string | undefined
+  private selectedKind: 'stockfish' | 'lc0' | 'other' = 'stockfish'
+  private selectedOptions: Record<string, string | number | boolean> = {}
   private proc: ChildProcessWithoutNullStreams | null = null
   private output = ''
   private stderr = ''
@@ -273,7 +295,7 @@ export class StockfishService {
 
   candidates(): EngineDescriptor[] {
     const configured = this.config.enginePath?.trim() || this.selectedPath
-    return discoverStockfish(configured)
+    return discoverStockfish(configured, this.config.extraEngines)
   }
 
   status(): EngineStatus {
@@ -305,7 +327,7 @@ export class StockfishService {
   /** Select one of the discovered executables and restart the engine with it. */
   async select(file: string): Promise<EngineStatus> {
     const resolved = path.resolve(file)
-    const allowed = this.candidates().some((candidate) => path.resolve(candidate.path).toLowerCase() === resolved.toLowerCase())
+    const allowed = this.candidates().some((candidate) => samePath(candidate.path, resolved))
     if (!allowed) {
       throw new EngineError('engine-not-allowed', `Stockfish path is not in the discovered candidate list: ${file}`)
     }
@@ -321,12 +343,12 @@ export class StockfishService {
     const candidates = this.candidates()
     const preferred = this.config.enginePath?.trim()
     if (preferred) {
-      const exact = candidates.find((candidate) => path.resolve(candidate.path).toLowerCase() === path.resolve(preferred).toLowerCase())
+      const exact = candidates.find((candidate) => samePath(candidate.path, preferred))
       if (exact) return exact.path
       throw new EngineError('engine-not-found', `Configured Stockfish path does not exist: ${preferred}`)
     }
     if (this.selectedPath) {
-      const exact = candidates.find((candidate) => path.resolve(candidate.path).toLowerCase() === path.resolve(this.selectedPath!).toLowerCase())
+      const exact = candidates.find((candidate) => samePath(candidate.path, this.selectedPath!))
       if (exact) return exact.path
     }
     if (candidates.length > 0) return candidates[0]!.path
@@ -348,6 +370,11 @@ export class StockfishService {
   private async start(): Promise<void> {
     const file = this.resolveEnginePath()
     this.selectedPath = file
+    const descriptor = this.candidates().find((candidate) => samePath(candidate.path, file))
+    this.selectedKind = descriptor?.kind ?? (/lc0|leela/i.test(file) ? 'lc0' : /stockfish/i.test(file) ? 'stockfish' : 'other')
+    this.selectedOptions = descriptor?.options ? { ...descriptor.options } : {}
+    this.name = 'Engine'
+    this.version = ''
     this.state = 'starting'
     this.lastError = ''
     this.stderr = ''
@@ -382,6 +409,13 @@ export class StockfishService {
       if (!this.version) {
         const match = /(\d+(?:\.\d+)+)/.exec(this.name)
         if (match) this.version = match[1]!
+      }
+      // Engine-specific options imported from En Croissant's engines.json.
+      for (const [name, value] of Object.entries(this.selectedOptions)) {
+        if (!name || /[\r\n]/.test(name) || /[\r\n]/.test(String(value))) continue
+        if (name === 'Threads' && this.config.threads !== undefined) continue
+        if (name === 'Hash' && this.config.hashMb !== undefined) continue
+        this.send(`setoption name ${name} value ${String(value)}`)
       }
       if (this.config.threads !== undefined) this.send(`setoption name Threads value ${clampInt(this.config.threads, 1, 16, 2)}`)
       if (this.config.hashMb !== undefined) this.send(`setoption name Hash value ${clampInt(this.config.hashMb, 16, 4096, 128)}`)
@@ -614,7 +648,12 @@ export class StockfishService {
       try {
         this.send(`setoption name MultiPV value ${multipv}`)
         this.send('position fen ' + fen)
-        this.send(movetimeMs === undefined ? `go depth ${depth}` : `go movetime ${movetimeMs}`)
+        if (this.selectedKind === 'lc0') {
+          // Leela exposes nodes/time rather than a Stockfish-style depth.
+          this.send(`go movetime ${movetimeMs ?? Math.max(600, Math.min(8_000, depth * 90))}`)
+        } else {
+          this.send(movetimeMs === undefined ? `go depth ${depth}` : `go movetime ${movetimeMs}`)
+        }
       } catch (error) {
         this.finishSearch(null, error instanceof Error ? error : new Error(String(error)))
       }

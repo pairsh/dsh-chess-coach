@@ -1,192 +1,181 @@
 # dsh-chess-coach
 
-在 DeepSeek Harness 右侧栏里下棋、看棋、复盘。
+在 DeepSeek Harness 的右侧栏里，用 **En Croissant 的风格和数据** 分析国际象棋，同时保留原来的 AI 教练。
 
-交互棋盘 + 本地 Stockfish 实时分析 + 教练式局面解读：不只告诉你「引擎走什么」，还会拆出双方的战略计划、战术警报、王安全、兵形、中心和下一步方案。可选接入 Lichess 云端评估与开局库。
+![En Croissant 风格的分析棋盘与 AI 教练](docs/croissant-fullscreen.png)
 
-![棋局教练在 DSH 右侧栏中的界面](docs/coach-panel.png)
+- 左侧是灰阶棋盘、玩家条、评估条和着法控制；
+- 右侧是 En Croissant 式标签页：**AI 教练 / 引擎 / 数据库 / 着法**；
+- 全屏右侧栏时自动变成「棋盘 + 分析面板」双栏布局。
+
+## 接入 En Croissant 的方式
+
+En Croissant 是 Tauri 桌面应用，没有 HTTP/CLI API；直接把它整个窗口嵌进 DSH 需要重写几十个 Tauri command，不现实。这个插件采用的是**文件级只读接入 + 同风格 UI**：
+
+| 能力 | 实现 |
+| --- | --- |
+| 引擎 | 读取 `engines/engines.json`，把 En Croissant 管理的本地 UCI 引擎合并进引擎选择器；Stockfish / RubiChess 可直接用 |
+| 数据库 | 只读枚举 `db/*.db3`，读取 `Info` 元数据，按棋手/赛事/结果搜索 `Games` 表 |
+| 载入对局 | 优先匹配 `.pgn` 附属文件；没有匹配时，如果 `Site` 是 Lichess 链接，则通过 Lichess 导出 API 拉取 PGN |
+| 应用联动 | 「打开应用」按钮可启动本机 En Croissant，方便查看完整对局/开局库 |
+| 外观 | 深色 Mantine 风格、`#e9ecef/#868e96` 灰阶棋盘、cburnett 棋子、右侧分析标签、纸面卡片式面板 |
+| AI 教练 | 完全保留：局面总结、双方计划、战术警报、王安全/中心/出子/兵形、引擎首选与后续变化 |
+
+本机实测读取到 4 个数据库（含 Caissabase、Lumbra's Gigabase 和 chess.com/lichess 个人库）以及 En Croissant 的 Stockfish 17.1。
+
+### 为什么不能直接解码 `Moves` BLOB
+
+En Croissant 的 `Games.Moves` 是每个半回合一个字节的**合法着法索引**，索引顺序由它的 Rust 走子生成器决定。除非逐字节复刻这个顺序，否则会静默载入另一盘棋。因此：
+
+- 有 `.pgn` 附属文件时，按 White/Black/Date/Result 匹配后载入；
+- 有 Lichess `Site` 链接时，通过 Lichess API 载入；
+- 两者都没有时，只展示对局元数据，不猜测 BLOB。
+
+`.pgn` 是 En Croissant 导入时的快照，可能和新导入的游戏发生漂移；载入失败时界面会明确提示。
 
 ## 功能
 
-- **可交互棋盘**：点击或拖拽走子，合法着法提示、升变选择、上一步高亮、将军高亮、翻转棋盘。
-- **实时 Stockfish**：本地 UCI 引擎常驻，走子后自动分析；MultiPV 候选着法、深度、节点数、耗时、白方视角评分。
-- **教练式解读**：
-  - 一句话局面总结与优势判断；
-  - 「引擎首选」与后续变化；
-  - 战术警报：悬子、将军、将杀、叉子、升变、底线与王前线路；
-  - 双方计划：出子、中心、王安全、通路兵、开放线、兑子取舍；
-  - 局面指标：子力、王安全、中心控制、出子、兵结构。
-- **双方视角**：设置「我执白 / 我执黑」后，分别展示「你的计划」与「对手的计划」；白黑双方分析始终保留。
-- **研究工具**：FEN 载入、PGN 导入/导出、复制 FEN、回看/撤销着法、跳转 Lichess 分析。
-- **Cloud Lichess（可选）**：Lichess 云端评估交叉验证；大师开局库可点击着法直接走棋。无需 API token。
-- **本地优先**：不联网也能用；只有开启云端功能时，当前 FEN 才会发送给 Lichess。
+- **交互棋盘**：点击/拖拽走子，合法落点、升变、上一步、将军高亮，翻转棋盘，玩家条与等级分。
+- **实时 Stockfish**：常驻 UCI 进程，走子后自动分析；MultiPV、深度、节点、耗时、白方视角评分。
+- **AI 教练**：局面总结、双方计划、战术警报、局面指标、引擎首选和后续变化。
+- **En Croissant 数据库**：数据库选择、棋手/赛事/结果筛选、对局列表、载入 PGN、打开 En Croissant。
+- **En Croissant 引擎**：从 `engines.json` 导入 Stockfish 等本地引擎；Lc0 因需要额外权重/后端参数暂不列出。
+- **研究工具**：FEN 载入、PGN 导入/导出、复制 FEN、回看/撤销、Lichess 分析链接。
+- **Cloud Lichess（可选）**：云端评估交叉验证；开局库受网络影响，默认关闭。
+- **会话隔离**：棋局按会话持久化，切换会话不会串棋。
 
-### 一个战术局面
+## 截图
 
-![战术警报与引擎首选](docs/tactics.png)
+En Croissant 数据库页：
+
+![En Croissant 数据库浏览](docs/croissant-database.png)
+
+载入 En Croissant 对局后：
+
+![载入 En Croissant 对局](docs/croissant-game.png)
+
+设置页会显示 En Croissant 连接状态、数据库数量和引擎：
+
+![设置](docs/croissant-settings.png)
 
 ## 环境要求
 
 | 项目 | 要求 |
 | --- | --- |
-| DSH | `>=0.2.2-rc.1 <0.3.0`（使用 DSH 原生右侧栏的 Tab 扩展点） |
-| Node.js | `>=20` |
-| Stockfish | 推荐 16/17；非必需，但本地实时分析需要它 |
-| 浏览器 | DSH Web / Desktop 当前 Chromium 内核 |
-
-### Stockfish 自动检测顺序
-
-1. `enginePath`（`cordis.patch.yml` 配置）
-2. 环境变量 `DSH_CHESS_STOCKFISH` / `STOCKFISH_BIN`
-3. Windows 上 En Croissant 的引擎目录：`%APPDATA%\org.encroissant.app\engines\stockfish\stockfish-*.exe`
-4. `PATH` 中的 `stockfish`
-5. 常见安装位置（Windows / macOS / Linux）
-
-本机已自动识别 En Croissant 附带的 **Stockfish 17.1**。也可以在插件设置里从候选列表中切换引擎，或手动写配置。
+| DSH | `>=0.2.2-rc.1 <0.3.0` |
+| Node.js | `>=20`；En Croissant 数据库功能需要 `node:sqlite`（Node 22.5+，DSH Desktop 当前使用 Node 24） |
+| En Croissant | 可选；本插件只读兼容 0.15.x 的 `db3` 旧库格式 |
+| Stockfish | 推荐 16/17；也可使用 En Croissant 的其它本地 UCI 引擎 |
 
 ## 安装
 
-### 从 npm（发布后）
-
 ```sh
+# npm 发布后
 dsh plugin --profile <profile> add dsh-chess-coach
+
+# 本地 tarball
+pnpm build && pnpm pack
+dsh plugin --profile <profile> add ./dsh-chess-coach-0.2.0.tgz
 ```
 
-### 本地 tarball
+Desktop 的 `desktop` profile 由 Electron 管理，命令行 `dsh plugin` 会拒绝修改；请使用 DSH 的插件安装入口，或本仓库开发时使用的 local bundle 安装。
 
-```sh
-pnpm build
-pnpm pack
-# 在 DSH 的「插件」页选择本地 tarball 安装，或：
-dsh plugin --profile <profile> add ./dsh-chess-coach-0.1.0.tgz
-```
+当前机器已安装的 bundle：
 
-Desktop 的 `desktop` profile 由 Electron 管理，命令行 `dsh plugin` 会拒绝修改；请使用 DSH 设置里的插件安装入口，或本仓库开发时使用的 `plugin_manager` 本地 bundle 安装。
+`D:\dsh-plugin-artifacts\dsh-chess-coach-0.2.0.tgz`
 
-### 本地开发（link）
-
-```sh
-dsh plugin --profile web add link:/absolute/path/to/dsh-chess-coach
-```
-
-profile 需要声明 `react` peer 的宿主实例；安装时 DSH 会处理。重新构建后刷新页面，Client bundle 会通过 DSH 的 HMR 重新加载；Host 路由变更需要重载插件或重启 DSH。
-
-### Git 安装
-
-```sh
-dsh plugin --profile web add github:<you>/dsh-chess-coach#<commit>
-```
-
-仓库带有 `prepare: tsdown`，pnpm 会在 git 安装后从源码构建 `lib/`。pnpm 10+ 首次会要求你在 profile 的 `pnpm-workspace.yaml` 中授权 `allowBuilds`；只对可信源码授权，并锁定 commit。
+打开方式：**展开右侧栏 → 指南页点击「棋局教练」**。
 
 ## 使用
 
-1. 打开一个会话。
-2. 展开右侧栏；如果没有打开任何页面，会显示指南页。
-3. 在指南中点击 **棋局教练**（♞）。
-4. 直接在棋盘上走子，或点 **FEN / PGN** 载入局面。
-
-![教练面板](docs/coach-detail.png)
-
-### 快捷键
-
-| 操作 | 按键 |
+| 操作 | 说明 |
 | --- | --- |
-| 上一步 / 下一步 | `←` / `→` |
-| 跳到开局 / 最新 | `Home` / `End` |
-| 翻转棋盘 | `F` |
-| 关闭弹窗 | `Esc` |
+| AI 教练 | 默认标签；显示局面总结、双方计划、战术警报和教练首选 |
+| 引擎 | MultiPV 候选线，点击可切换棋盘箭头 |
+| 数据库 | 选择 En Croissant `.db3`，按棋手/赛事/结果查询；点击带 `PGN` 或 `Lichess` 标记的对局载入 |
+| 着法 | 完整着法列表，点击任意半回合回看 |
+| 全屏右侧栏 | 自动切换双栏布局，接近 En Croissant 的分析窗口 |
 
-### 设置
-
-右上角 ⚙：
-
-| 设置 | 默认 | 说明 |
-| --- | --- | --- |
-| 深度 | 14 | 8–24；越深越强，也越慢 |
-| 候选着法 | 3 | 1–5 条 MultiPV |
-| 实时分析 | 开 | 走子后约 320 ms 防抖自动分析 |
-| 棋盘箭头 | 开 | 显示选中引擎线的第一着 |
-| 云端评估 | 开 | Lichess cloud-eval，失败时不影响本地分析 |
-| 开局库 | 关 | Lichess masters explorer；部分网络会返回 401，开启前请确认网络可达 |
-| 我执 | 白方 | 切换「你的计划 / 对手的计划」视角 |
+快捷键：`←`/`→` 上一步/下一步，`Home`/`End` 开局/最新，`F` 翻转，`Esc` 关闭弹窗。
 
 ## 配置 `cordis.patch.yml`
-
-插件 bundle 的默认层已经带好常用值；需要覆盖时，在 profile 的 `cordis.patch.yml` 中按行 id 覆盖：
 
 ```yaml
 - id: dsh-chess-coach
   name: dsh-chess-coach
   config:
-    # 不在自动检测路径中时填写；空字符串/省略表示自动检测
+    # 可选：手动指定 Stockfish
     enginePath: 'C:\Program Files\Stockfish\stockfish.exe'
     threads: 4
     hashMb: 256
     defaultMultipv: 3
+    # 可选：En Croissant 数据目录/应用路径（默认自动检测）
+    enCroissantDataDir: 'C:\Users\<you>\AppData\Roaming\org.encroissant.app'
+    enCroissantAppPath: 'D:\en-croissant\en-croissant.exe'
 ```
 
-注意 patch 会替换整段 `config`，不是深合并；覆盖时把需要的键都写上。
+patch 会替换整段 `config`，不是深合并；覆盖时请写全需要的键。
 
-## 安全与边界
+## 安全与隐私
 
-- Host 只在 `webServer` 上注册同源 JSON 路由：`/chess-coach/api/*`；检查 `Host`/`Origin` 与 `sec-fetch-site`，请求体上限 64 KiB。
-- 浏览器不能传任意可执行文件路径。`/engine/select` 只接受服务端自己发现的候选路径；`enginePath` 只能由 profile 配置提供。
-- Stockfish 由 `child_process.spawn` 直接启动，不经过 shell。
-- 每次分析会取消上一轮搜索，避免堆积过期请求；并发请求串行进入引擎，最多一个活跃搜索。
-- Lichess 请求由 Host 代理（避开 CORS），带 350 ms 间隔限流与 5 分钟缓存；关闭云端功能后不会发起任何网络请求。
-- 教练文字是确定性规则 + 引擎评估，不会凭空编造评估；它不等同于人类大师的完整判断。
+- En Croissant 数据目录**只读**打开；插件不写 `.db3`、`.ecsi`、`.pgn`，不修改 En Croissant 配置。
+- Host 路由为同源 `/chess-coach/api/*`，检查 `Host`/`Origin`、`sec-fetch-site`，请求体上限 64 KiB。
+- 数据库名拒绝路径分隔符；引擎路径只能是服务端发现的白名单；En Croissant 启动路径只接受检测到的固定可执行文件，不经过 shell。
+- 本地 Stockfish 不联网；只有开启云评估/开局库时，当前 FEN 才会发给 Lichess。
+- 读取 En Croissant 数据库后只返回对局元数据和 PGN，不执行数据库中的任何内容。
 
 ## 开发
 
 ```sh
 pnpm install
 pnpm typecheck
-pnpm test          # 单元测试 + 本机 Stockfish 集成测试
-pnpm test:engine   # 只跑 Stockfish 集成测试
-pnpm build         # lib/index.js (ESM host) + lib/client.js (DSH lazy-CJS browser bundle)
+pnpm test          # 15 个测试，含真实 Stockfish 与 En Croissant 文件桥
+pnpm test:engine
+pnpm build         # lib/index.js (ESM host) + lib/client.js (DSH lazy-CJS browser factory)
 pnpm pack
 ```
-
-测试若找不到 Stockfish，会自动跳过集成测试；设置 `DSH_CHESS_STOCKFISH` 可指定引擎。
 
 ### 结构
 
 ```
 src/
-  index.ts              Host 插件：路由、生命周期
+  index.ts                 Host 路由与生命周期
   host/
-    engine.ts           Stockfish UCI 常驻进程、取消/串行、候选检测
-    coach.ts            FEN 事实 + 引擎线 → 教练报告
-    lichess.ts          cloud-eval / opening explorer 代理、限流、缓存
-  shared/types.ts       Host ↔ Client 的 wire types
+    engine.ts              UCI 常驻引擎、取消/串行、候选合并
+    encroissant.ts         En Croissant 只读文件桥（引擎/数据库/PGN/Lichess/启动）
+    coach.ts               FEN + 引擎线 → 教练报告
+    lichess.ts             cloud-eval / opening explorer
+  shared/types.ts          Host ↔ Client wire types
   client/
-    index.tsx           DSH 右侧栏 type/body/title 注册
-    ChessCoach.tsx      棋局状态、分析调度、布局
-    Board.tsx           8×8 棋盘、拖拽/点击、箭头
-    CoachPanel.tsx      教练卡片
-    Dialogs.tsx         设置/FEN/PGN/升变
-    styles.ts           作用域样式
-tests/                  规则、UCI 转换、PGN、Stockfish 集成
+    index.tsx              DSH 右侧栏 type/body/title 注册
+    ChessCoach.tsx         棋局状态、分析调度、En Croissant 风格布局
+    EnCroissantPanel.tsx   数据库浏览
+    CoachPanel.tsx         AI 教练
+    Board.tsx              8×8 棋盘
+    piece-theme.ts         cburnett 棋子（生成）
+    styles.ts              En Croissant 主题与布局
+tests/                     15 个单元/集成测试
 ```
 
 ### 与 DSH 发布规范对应
 
-- `package.json` 的 `dsh.bundle.patch` → `cordis.patch.yml`，安装后向 profile 插入一行 `dsh-chess-coach`。
-- `dsh.client` 声明 `platform: "web"`、`inject` 与 `exports["./client"]`；Client bundle 是 DSH Module Loader 的 lazy-CJS factory，React 从平台共享表解析，其余依赖内联。
-- `files` 白名单只发布 `lib/`、patch、manifest、README、LICENSE、icon。
-- `engines.dsh` 限制 DSH 兼容范围；`peerDependencies` 只声明共享 React。
-- Host 端不静态 import 任何 `@deepseek-ai/dsh-*` 运行时包，保持对宿主版本的松耦合；Client 端只使用 DSH 公开的 slot/tab 注册面。
-- `dsh.plugin.json` 提供插件市场的 id/version/main/client 元数据。
+- `dsh.bundle.patch` → `cordis.patch.yml`，安装后插入一行 `dsh-chess-coach`。
+- `dsh.client` 声明 web platform、inject 和 browser entry；Client bundle 是 DSH Module Loader 的 lazy-CJS factory。
+- `files` 只发布构建产物、patch、manifest、README、LICENSE、第三方声明、图标和截图。
+- `engines.dsh` 限制兼容范围；React 是唯一 peer。
+- Host 不静态 import 任何 `@deepseek-ai/dsh-*` 运行时包；Client 只使用公开的 slot/tab 注册面。
 
 ## 已知限制
 
-- 单引擎单进程；同时只保留一个分析，深度很高时高频走子会以最新局面为准。
-- 云端开局库在部分网络会 401/超时；默认关闭，失败不会影响本地引擎。
-- 没有在线对战、时钟、引擎对战或云同步；棋局按会话保存在浏览器 `localStorage`。
-- 教练规则覆盖常见战术与结构，但不是完整的局面理解模型；关键决定仍应自己计算。
-- PGN 变例、评论和 NAG 不会完整保留；导入/导出主线着法。
+- En Croissant 0.15.x 旧库格式；Database v2（DuckDB）尚未接入。
+- `Moves` BLOB 不解码；没有 PGN/Lichess 来源的对局只能看元数据。
+- `.pgn` 附属文件是导入快照，可能漂移；匹配失败会提示。
+- Lc0 需要权重文件和后端参数，当前不列入可选引擎。
+- 没有在线对战、时钟、开局库训练/间隔重复；这些仍请在 En Croissant 本体中使用。
+- 教练文字是确定性规则 + 引擎评估，不会凭空编造评估。
 
 ## License
 
-MIT。内置的 [chess.js](https://github.com/jhlywa/chess.js) 使用 BSD-2-Clause；Stockfish 是独立的 GPLv3 程序，本项目只通过 UCI 调用用户本机的 Stockfish，不打包其二进制。Lichess 数据的使用受 Lichess 服务条款与速率限制约束。
+代码 MIT。cburnett 棋子 SVG 为 **GPL-2.0-or-later**（Colin M.L. Burnett），完整文本见 [`LICENSES/GPL-2.0.txt`](LICENSES/GPL-2.0.txt)；第三方声明见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
+
+En Croissant 是独立的 GPL-3.0 项目，本项目不包含其源码，也不代表 En Croissant 官方。Stockfish 是独立的 GPLv3 程序，本项目只通过 UCI 调用，不打包其二进制。Lichess 数据受其服务条款与速率限制约束。

@@ -1,7 +1,7 @@
 {
   "name": "dsh-chess-coach",
-  "version": "0.1.0",
-  "description": "DSH 右侧栏国际象棋教练：可交互棋盘、本地 Stockfish 实时分析、战术与战略建议，并可选接入 Lichess 云端评估与开局库。",
+  "version": "0.2.0",
+  "description": "DSH 右侧栏国际象棋教练：En Croissant 风格界面，只读接入 En Croissant 数据库/引擎，保留 Stockfish 实时分析、AI 教练与 Lichess 云端评估。",
   "type": "module",
   "main": "lib/index.js",
   "icon": "./icon.svg",
@@ -23,6 +23,8 @@
     "CHANGELOG.md",
     "icon.svg",
     "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "LICENSES",
     "docs"
   ],
   "engines": {
@@ -67,6 +69,7 @@
     "dsh-plugin",
     "deepseek-harness",
     "chess",
+    "en-croissant",
     "stockfish",
     "lichess",
     "coach",

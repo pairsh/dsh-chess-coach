@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import type { Color, EngineStatus } from '../shared/types.ts'
+import type { Color, EngineStatus, EnCroissantStatus } from '../shared/types.ts'
 import type { Settings } from './types.ts'
-import { PIECE_GLYPH, validateFen } from './chess-utils.ts'
+import { validateFen } from './chess-utils.ts'
+import { PIECE_CLASS } from './piece-theme.ts'
 
 function ModalShell({ title, subtitle, onClose, children }: {
   title: string
@@ -60,13 +61,15 @@ function Segmented<T extends string>({ value, options, onChange }: { value: T; o
   )
 }
 
-export function SettingsDialog({ settings, status, busy, onChange, onClose, onRefresh, onSelectEngine }: {
+export function SettingsDialog({ settings, status, enCroissant, busy, onChange, onClose, onRefresh, onRefreshEnCroissant, onSelectEngine }: {
   settings: Settings
   status: EngineStatus | null
+  enCroissant: EnCroissantStatus | null
   busy: boolean
   onChange: (patch: Partial<Settings>) => void
   onClose: () => void
   onRefresh: () => void
+  onRefreshEnCroissant: () => void
   onSelectEngine: (path: string) => void
 }) {
   const candidates = status?.candidates ?? []
@@ -104,6 +107,29 @@ export function SettingsDialog({ settings, status, busy, onChange, onClose, onRe
             <p>没有找到 Stockfish。安装后重新检测，或在 <code>cordis.patch.yml</code> 的 <code>enginePath</code> 中填写绝对路径。</p>
             <p className="cc-muted">Windows 已自动搜索 En Croissant 的引擎目录、PATH 与常见安装位置。</p>
           </div>
+        )}
+      </div>
+
+      <div className="cc-settings-section">
+        <h4>En Croissant</h4>
+        <div className={`cc-engine-card ${enCroissant?.installed ? 'is-ready' : 'is-offline'}`}>
+          <div className="cc-engine-state">
+            <span className="cc-engine-dot" />
+            <div>
+              <b>{enCroissant?.installed ? 'En Croissant 已连接' : 'En Croissant 未连接'}</b>
+              <small>{enCroissant?.dataDir || '正在检测数据目录…'}</small>
+            </div>
+          </div>
+          <button type="button" className="cc-btn cc-btn-ghost" onClick={onRefreshEnCroissant}>刷新</button>
+        </div>
+        {enCroissant?.installed ? (
+          <p className="cc-muted cc-small">
+            只读数据库 {enCroissant.databases.length} 个 · 引擎 {enCroissant.engines.length} 个。数据库页可搜索并载入带 PGN/Lichess 来源的对局。
+          </p>
+        ) : (
+          <p className="cc-muted cc-small">
+            在 En Croissant 中导入一次数据库后刷新；默认读取 <code>%APPDATA%\org.encroissant.app</code>。
+          </p>
         )}
       </div>
 
@@ -200,8 +226,8 @@ export function PromotionDialog({ color, onPick, onCancel }: { color: Color; onP
       <div className="cc-promotion" role="dialog" aria-label="选择升变棋子">
         <div className="cc-promotion-title">升变为</div>
         {(['q', 'r', 'b', 'n'] as const).map((piece) => (
-          <button key={piece} type="button" className={`cc-promotion-choice cc-piece-${color}`} onClick={() => onPick(piece)}>
-            {PIECE_GLYPH[color][piece]}
+          <button key={piece} type="button" className="cc-promotion-choice" onClick={() => onPick(piece)}>
+            <span className={`cc-piece ${color === 'w' ? 'white' : 'black'} ${PIECE_CLASS[piece]}`} aria-hidden="true" />
           </button>
         ))}
         <button type="button" className="cc-promotion-cancel" onClick={onCancel}>取消</button>
