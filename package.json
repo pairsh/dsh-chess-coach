@@ -1,0 +1,79 @@
+{
+  "name": "dsh-chess-coach",
+  "version": "0.1.0",
+  "description": "DSH 右侧栏国际象棋教练：可交互棋盘、本地 Stockfish 实时分析、战术与战略建议，并可选接入 Lichess 云端评估与开局库。",
+  "type": "module",
+  "main": "lib/index.js",
+  "icon": "./icon.svg",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "dsh.plugin.json",
+    "README.md",
+    "README.en.md",
+    "CHANGELOG.md",
+    "icon.svg",
+    "LICENSE",
+    "docs"
+  ],
+  "engines": {
+    "dsh": ">=0.2.2-rc.1 <0.3.0",
+    "node": ">=20"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-sidebar-right"
+      ],
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "react": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "~18.3.1",
+    "@types/react-dom": "~18.3.1",
+    "chess.js": "1.4.0",
+    "react": "^18.2.0",
+    "react-dom": "18.2.0",
+    "tsdown": "^0.23.7",
+    "typescript": "^5.9.0",
+    "vitest": "^4.1.8"
+  },
+  "scripts": {
+    "build": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\" && tsdown",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:engine": "vitest run tests/engine.integration.test.ts",
+    "prepublishOnly": "pnpm typecheck && pnpm test && pnpm build",
+    "prepare": "tsdown"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "chess",
+    "stockfish",
+    "lichess",
+    "coach",
+    "国际象棋"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT"
+}

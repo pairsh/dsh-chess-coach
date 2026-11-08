@@ -1,0 +1,15 @@
+# dsh-chess-coach bundle layer.
+#
+# Installed with:
+#   dsh plugin --profile <name> add dsh-chess-coach
+#
+# All fields are optional. `enginePath` is for a Stockfish executable outside
+# the auto-discovered locations; leave it out to use En Croissant's engine
+# directory, PATH, or the usual system install paths.
+- insert:
+    - id: dsh-chess-coach
+      name: dsh-chess-coach
+      config:
+        threads: 2
+        hashMb: 128
+        defaultMultipv: 3

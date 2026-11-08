@@ -1,0 +1,17 @@
+{
+  "id": "dsh-chess-coach",
+  "version": "0.1.0",
+  "main": "./lib/index.js",
+  "icon": "./icon.svg",
+  "description": "DSH 右侧栏国际象棋教练：交互棋盘、本地 Stockfish 实时分析、战术与战略建议，可选 Lichess 云端评估与开局库。",
+  "engines": {
+    "dsh": ">=0.2.2-rc.1 <0.3.0"
+  },
+  "contributes": {
+    "tools": [],
+    "skills": []
+  },
+  "client": {
+    "main": "./lib/client.js"
+  }
+}
