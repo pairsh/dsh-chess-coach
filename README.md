@@ -80,9 +80,9 @@ dsh plugin --profile <profile> add ./dsh-chess-coach-0.2.0.tgz
 
 Desktop 的 `desktop` profile 由 Electron 管理，命令行 `dsh plugin` 会拒绝修改；请使用 DSH 的插件安装入口，或本仓库开发时使用的 local bundle 安装。
 
-当前机器已安装的 bundle：
+本机构建产物（当前未安装，可手动安装）：
 
-`D:\dsh-plugin-artifacts\dsh-chess-coach-0.2.0.tgz`
+`D:\DSH\artifacts\dsh-chess-coach-0.2.0.tgz`
 
 打开方式：**展开右侧栏 → 指南页点击「棋局教练」**。
 
