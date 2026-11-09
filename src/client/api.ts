@@ -3,9 +3,6 @@ import type {
   ApiFailure,
   CloudEvalResponse,
   EngineStatus,
-  EnCroissantGameResponse,
-  EnCroissantGamesResponse,
-  EnCroissantStatus,
   OpeningResponse,
 } from '../shared/types.ts'
 
@@ -85,40 +82,4 @@ export async function requestCloudEval(fen: string, signal?: AbortSignal): Promi
 
 export async function requestOpening(fen: string, signal?: AbortSignal): Promise<OpeningResponse> {
   return getJson<OpeningResponse>(`opening?fen=${encodeURIComponent(fen)}`, signal)
-}
-
-export async function fetchEnCroissantStatus(signal?: AbortSignal): Promise<EnCroissantStatus> {
-  const payload = await getJson<{ ok: true; status: EnCroissantStatus }>('en-croissant/status', signal)
-  return payload.status
-}
-
-export async function fetchEnCroissantGames(
-  input: {
-    db: string
-    player?: string
-    event?: string
-    result?: string
-    after?: string
-    before?: string
-    limit?: number
-    offset?: number
-  },
-  signal?: AbortSignal,
-): Promise<EnCroissantGamesResponse> {
-  const params = new URLSearchParams({ db: input.db })
-  for (const key of ['player', 'event', 'result', 'after', 'before'] as const) {
-    const value = input[key]
-    if (value) params.set(key, value)
-  }
-  if (input.limit !== undefined) params.set('limit', String(input.limit))
-  if (input.offset !== undefined) params.set('offset', String(input.offset))
-  return getJson<EnCroissantGamesResponse>(`en-croissant/games?${params.toString()}`, signal)
-}
-
-export async function fetchEnCroissantGame(db: string, id: number, signal?: AbortSignal): Promise<EnCroissantGameResponse> {
-  return getJson<EnCroissantGameResponse>(`en-croissant/game?db=${encodeURIComponent(db)}&id=${id}`, signal)
-}
-
-export async function openEnCroissant(): Promise<void> {
-  await postJson<{ ok: true }>('en-croissant/open', {})
 }

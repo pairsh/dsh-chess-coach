@@ -1,7 +1,6 @@
 import type { DragEvent } from 'react'
 import type { Color, PieceSymbol } from 'chess.js'
-import { isLightSquare, PIECE_NAME, squarePoint } from './chess-utils.ts'
-import { PIECE_CLASS } from './piece-theme.ts'
+import { isLightSquare, PIECE_GLYPH, PIECE_NAME, squarePoint } from './chess-utils.ts'
 
 export interface BoardCell {
   readonly square: string
@@ -119,10 +118,9 @@ export function Board(props: BoardProps) {
               {rowIndex === 7 && <span className="cc-coord cc-coord-file">{file}</span>}
               {target !== undefined && <span className="cc-target-dot" aria-hidden="true" />}
               {piece && (
-                <span
-                  className={`cc-piece ${piece.color === 'w' ? 'white' : 'black'} ${PIECE_CLASS[piece.type]}`}
-                  aria-hidden="true"
-                />
+                <span className={`cc-piece cc-piece-${piece.color}`} aria-hidden="true">
+                  {PIECE_GLYPH[piece.color][piece.type]}
+                </span>
               )}
             </button>
           )

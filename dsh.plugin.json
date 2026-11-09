@@ -1,9 +1,9 @@
 {
   "id": "dsh-chess-coach",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "main": "./lib/index.js",
   "icon": "./icon.svg",
-  "description": "DSH 右侧栏国际象棋教练：En Croissant 风格界面，只读接入 En Croissant 数据库/引擎，保留 Stockfish 实时分析、AI 教练与 Lichess 云端评估。",
+  "description": "DSH 右侧栏国际象棋教练：交互棋盘、本地 Stockfish 实时分析、战术与战略建议，可选 Lichess 云端评估与开局库。",
   "engines": {
     "dsh": ">=0.2.2-rc.1 <0.3.0"
   },

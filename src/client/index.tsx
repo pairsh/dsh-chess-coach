@@ -16,7 +16,7 @@ export const inject = ['slots', 'sidebarRightTabs']
 
 const KIND = 'dsh-chess-coach'
 const TITLE = '棋局教练'
-const DESCRIPTION = 'En Croissant 风格棋盘 + 只读数据库/引擎接入 + Stockfish AI 教练。'
+const DESCRIPTION = '交互棋盘 + Stockfish 实时教练，分析双方计划、战术与下一步。'
 
 function CoachBody(props: SidebarTabBodyProps) {
   return createElement(ChessCoach, { sessionId: props.sessionId })

@@ -6,66 +6,6 @@ export interface EngineDescriptor {
   readonly path: string
   readonly label: string
   readonly version?: string
-  readonly name?: string
-  readonly source?: 'auto' | 'en-croissant'
-  readonly kind?: 'stockfish' | 'lc0' | 'other'
-  readonly options?: Readonly<Record<string, string | number | boolean>>
-}
-
-export interface EnCroissantDatabase {
-  readonly id: string
-  readonly title: string
-  readonly description: string
-  readonly gameCount: number
-  readonly playerCount: number
-  readonly path: string
-  readonly sizeBytes: number
-  readonly pgnSidecar: boolean
-  readonly readable: boolean
-  readonly error?: string
-}
-
-export interface EnCroissantStatus {
-  readonly installed: boolean
-  readonly appPath?: string
-  readonly dataDir: string
-  readonly databases: readonly EnCroissantDatabase[]
-  readonly engines: readonly EngineDescriptor[]
-  readonly error?: string
-}
-
-export interface EnCroissantGame {
-  readonly id: number
-  readonly white: string
-  readonly black: string
-  readonly whiteElo?: number
-  readonly blackElo?: number
-  readonly result: string
-  readonly date?: string
-  readonly event?: string
-  readonly site?: string
-  readonly siteUrl?: string
-  readonly timeControl?: string
-  readonly eco?: string
-  readonly plyCount?: number
-  readonly pgnSidecar: boolean
-}
-
-export interface EnCroissantGamesResponse {
-  readonly ok: true
-  readonly database: string
-  readonly games: readonly EnCroissantGame[]
-  readonly returned: number
-  readonly total?: number
-}
-
-export interface EnCroissantGameResponse {
-  readonly ok: true
-  readonly database: string
-  readonly id: number
-  readonly source: 'sidecar' | 'lichess'
-  readonly pgn: string
-  readonly headers: Readonly<Record<string, string>>
 }
 
 export interface EngineStatus {

@@ -4,9 +4,8 @@
 #   dsh plugin --profile <name> add dsh-chess-coach
 #
 # All fields are optional. `enginePath` is for a Stockfish executable outside
-# the auto-discovered locations; leave it out to use En Croissant's engine
-# directory, PATH, or the usual system install paths. The En Croissant paths
-# are auto-detected too; set them only for a non-standard install.
+# the auto-discovered locations; leave it out to use PATH or the usual system
+# install paths.
 - insert:
     - id: dsh-chess-coach
       name: dsh-chess-coach
@@ -14,5 +13,3 @@
         threads: 2
         hashMb: 128
         defaultMultipv: 3
-        # enCroissantDataDir: 'C:\Users\<you>\AppData\Roaming\org.encroissant.app'
-        # enCroissantAppPath: 'D:\en-croissant\en-croissant.exe'

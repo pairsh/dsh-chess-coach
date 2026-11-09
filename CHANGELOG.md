@@ -1,16 +1,13 @@
 # Changelog
 
-## 0.2.0 — 2026-11-08
+## 0.3.0 — 2026-11-09
 
-En Croissant integration, without losing the AI coach.
+Separated from En Croissant.
 
-- Read-only En Croissant bridge: data directory/app detection, `engines.json` import, `.db3` metadata, game-header search, PGN-sidecar matching, Lichess export fallback, and app launch.
-- En Croissant-style dark interface: Mantine-like tabs, gray board, cburnett pieces, player bars, four-tab analysis panel, and a board/analysis two-column layout in fullscreen.
-- New database tab with filters, game list, loadable-source markers, read-only guarantees, and explicit errors when the move BLOB has no safe PGN source.
-- AI coach, Stockfish UCI analysis, Lichess cloud evaluation, FEN/PGN tools, and per-conversation persistence retained.
-- En Croissant engines are merged into the picker; Lc0 is intentionally hidden until weights/backend configuration is supported.
-- Added third-party notices and GPL-2.0 text for the cburnett piece artwork.
-- 15 tests, including real Stockfish and En Croissant file-bridge coverage.
+- Removed the En Croissant database/engine bridge, database tab, settings card, and app launch.
+- Removed En Croissant engine auto-detection; Stockfish is discovered from config, env, PATH, or common install locations.
+- The DSH plugin is now a standalone chess coach. En Croissant development continues in its own repository.
+- Reverted to the pre-integration v0.1 DSH-only interface to keep the split immediate and unambiguous.
 
 ## 0.1.0 — 2026-11-08
 
